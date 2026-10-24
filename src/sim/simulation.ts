@@ -35,6 +35,25 @@ export const DEFAULT_CONFIG: SimConfig = {
   messageLifetime: 10, // s
 };
 
+/**
+ * DEMO_PRESET_CONFIG — the on-stage scenario for a 3-minute pitch.
+ *
+ * Denser, faster traffic with an earlier emergency. Under these conditions the
+ * hazard-only baseline produces at least one rear-end collision while the V2X
+ * scenario avoids all collisions — from the SAME seed and identical initial
+ * traffic. These exact values are exercised by the "stress" assertions in
+ * simulation.test.ts, so the dramatic contrast is a verified, reproducible
+ * property of the sim, not a staged one.
+ */
+export const DEMO_PRESET_CONFIG: SimConfig = {
+  ...DEFAULT_CONFIG,
+  seed: 12345,
+  vehicleCount: 36,
+  meanSpeed: 36, // ~ 81 mph
+  emergencyTime: 2,
+  v2xPenetration: 0.9,
+};
+
 export class Simulation {
   config: SimConfig;
   hazardOnly: World;

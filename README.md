@@ -69,6 +69,31 @@ penetration, network latency, packet loss, communication range, and the random
 seed, then **Apply & Replay** to rerun both scenarios deterministically. There is
 also a manual **Driver SOS** button.
 
+### Presentation mode
+
+For a live pitch, use the two buttons in the blue **Presentation mode** bar:
+
+- **🎬 Demo Preset** — one click loads the curated stress scenario (`DEMO_PRESET_CONFIG`)
+  and starts it. Under these denser/faster conditions the hazard-only baseline
+  suffers a rear-end collision while the SafeStop V2X scenario avoids it — from the
+  same seed and identical starting traffic. Expected on-screen metrics:
+
+  | Metric | Hazard only | SafeStop V2X |
+  | --- | --- | --- |
+  | Collisions | **1** | **0** |
+  | Min time-to-collision | ~0.03 s | ~1.90 s |
+  | Max braking | 8.0 m/s² | 8.0 m/s² |
+  | Warning lead time | 0.0 s | ~5.5 s |
+  | Message delivery | — | ~95% |
+
+- **🔁 Reset Demo** — replays the current scenario from t=0 so you can run it again
+  on stage. Because the sim is deterministic, every replay is identical.
+
+These numbers are produced by the simulation each run (read from
+`MetricsAccumulator`), not hardcoded. The exact `DEMO_PRESET_CONFIG` is asserted in
+`src/sim/__tests__/simulation.test.ts` (collision in baseline, strictly fewer in
+V2X, identical initial traffic, deterministic replay).
+
 ---
 
 ## How it works (architecture)

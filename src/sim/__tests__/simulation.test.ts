@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { Simulation, DEFAULT_CONFIG } from "../simulation";
+import {
+  Simulation,
+  DEFAULT_CONFIG,
+  DEMO_PRESET_CONFIG,
+} from "../simulation";
 import type { SimConfig } from "../types";
 
 /** Run a simulation for `seconds` and return the final snapshot. */
@@ -73,15 +77,10 @@ describe("V2X advantage (behavioral, not a validated safety claim)", () => {
     expect(snap.v2x.metrics.warningLeadTime).toBeGreaterThan(0);
   });
 
-  it("STRESS: denser/faster traffic rear-ends in hazard-only; v2x has strictly fewer collisions", () => {
-    const stress: SimConfig = {
-      ...DEFAULT_CONFIG,
-      vehicleCount: 36,
-      meanSpeed: 36,
-      emergencyTime: 2,
-      v2xPenetration: 0.9,
-    };
-    const snap = run(stress, 20);
+  it("DEMO PRESET: hazard-only rear-ends; v2x has strictly fewer collisions", () => {
+    // Uses the EXACT config loaded by the on-stage "Demo Preset" button, so the
+    // presentation's dramatic contrast is a verified property of the sim.
+    const snap = run(DEMO_PRESET_CONFIG, 20);
     // Without V2X, late visual perception of the stopped queue causes at least
     // one rear-end collision among the fast upstream approachers.
     expect(snap.hazardOnly.metrics.collisions).toBeGreaterThanOrEqual(1);
@@ -92,5 +91,20 @@ describe("V2X advantage (behavioral, not a validated safety claim)", () => {
     // Braking still bounded in both.
     expect(snap.hazardOnly.metrics.maxBrakingDecel).toBeLessThanOrEqual(8.001);
     expect(snap.v2x.metrics.maxBrakingDecel).toBeLessThanOrEqual(8.001);
+  });
+
+  it("DEMO PRESET: both worlds start from identical initial traffic", () => {
+    const sim = new Simulation(DEMO_PRESET_CONFIG);
+    const snap = sim.snapshot();
+    const h = snap.hazardOnly.vehicles.map((v) => [v.lane, v.position, v.speed]);
+    const x = snap.v2x.vehicles.map((v) => [v.lane, v.position, v.speed]);
+    expect(h).toEqual(x);
+    expect(snap.hazardOnly.hazardVehicleId).toBe(snap.v2x.hazardVehicleId);
+  });
+
+  it("DEMO PRESET: replays deterministically (same run every time)", () => {
+    const a = run(DEMO_PRESET_CONFIG, 20);
+    const b = run(DEMO_PRESET_CONFIG, 20);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 });

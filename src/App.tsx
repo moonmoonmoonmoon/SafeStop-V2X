@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_CONFIG,
+  DEMO_PRESET_CONFIG,
   Simulation,
   type SimSnapshot,
 } from "./sim/simulation";
@@ -26,6 +27,9 @@ export default function App() {
     simRef.current.snapshot()
   );
   const [running, setRunning] = useState(false);
+  // Bumped whenever a run (re)starts, so the animation effect always restarts the
+  // rAF loop cleanly even when `running` was already true (e.g. Reset Demo).
+  const [runToken, setRunToken] = useState(0);
 
   const rafRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
@@ -68,7 +72,7 @@ export default function App() {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
       };
     }
-  }, [running, loop]);
+  }, [running, runToken, loop]);
 
   const handleChange = useCallback((patch: Partial<SimConfig>) => {
     setConfig((c) => ({ ...c, ...patch }));
@@ -104,7 +108,37 @@ export default function App() {
     if (!running) setSnapshot(simRef.current.snapshot());
   }, [running]);
 
+  // Load the curated stress scenario (collision in baseline, avoided with V2X)
+  // and start it immediately — one click for the presentation.
+  const handleLoadDemoPreset = useCallback(() => {
+    setConfig(DEMO_PRESET_CONFIG);
+    simRef.current.reset(DEMO_PRESET_CONFIG);
+    accumulatorRef.current = 0;
+    lastTimeRef.current = 0;
+    setSnapshot(simRef.current.snapshot());
+    setRunning(true);
+    setRunToken((t) => t + 1); // force the loop to (re)start
+  }, []);
+
+  // Replay the CURRENT scenario from t=0 (deterministic) and start it again, so
+  // the same run can be shown repeatedly on stage.
+  const handleResetDemo = useCallback(() => {
+    simRef.current.reset(config);
+    accumulatorRef.current = 0;
+    lastTimeRef.current = 0;
+    setSnapshot(simRef.current.snapshot());
+    setRunning(true);
+    setRunToken((t) => t + 1); // force a clean restart even if already running
+  }, [config]);
+
   const finished = snapshot.time >= MAX_SIM_TIME;
+
+  const isDemoPreset =
+    config.vehicleCount === DEMO_PRESET_CONFIG.vehicleCount &&
+    config.meanSpeed === DEMO_PRESET_CONFIG.meanSpeed &&
+    config.emergencyTime === DEMO_PRESET_CONFIG.emergencyTime &&
+    config.v2xPenetration === DEMO_PRESET_CONFIG.v2xPenetration &&
+    config.seed === DEMO_PRESET_CONFIG.seed;
 
   return (
     <div className="app">
@@ -124,6 +158,25 @@ export default function App() {
           {finished && <span className="badge">run complete</span>}
         </div>
       </header>
+
+      <div className="demo-bar">
+        <div className="demo-bar-text">
+          <span className="demo-bar-title">Presentation mode</span>
+          <span className="demo-bar-sub">
+            One click loads the stress scenario: the baseline crashes, SafeStop
+            V2X does not — same seed, identical starting traffic.
+          </span>
+        </div>
+        <div className="demo-bar-actions">
+          <button className="btn demo" onClick={handleLoadDemoPreset}>
+            🎬 Demo Preset
+          </button>
+          <button className="btn reset" onClick={handleResetDemo}>
+            🔁 Reset Demo
+          </button>
+          {isDemoPreset && <span className="demo-flag">demo preset loaded</span>}
+        </div>
+      </div>
 
       <ControlPanel
         config={config}
