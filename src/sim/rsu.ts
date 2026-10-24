@@ -39,7 +39,7 @@ export function updateRSU(
   const upstream = rsu.position < message.originPosition; // warn before the hazard
   if (withinRange && upstream) {
     const distance = Math.round(message.originPosition - rsu.position);
-    rsu.signText = `⚠ HAZARD AHEAD ${distance} m — SLOW DOWN`;
+    rsu.signText = `⚠ EMERGENCY AHEAD ${distance} m — SLOW DOWN`;
     rsu.signExpiresAt = message.expiresAt;
     return true;
   }

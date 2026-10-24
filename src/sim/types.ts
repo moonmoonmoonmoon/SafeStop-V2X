@@ -28,11 +28,51 @@ export enum DriverState {
   Confirmed = "Confirmed",
 }
 
+/**
+ * Behavioral role used primarily for VISUALIZATION so the animation is legible
+ * without reading the source. Derived from the vehicle's situation each tick:
+ *
+ *   - Emergency: the impaired vehicle performing the pull-over maneuver.
+ *   - Unalerted: has not yet perceived the emergency (still driving normally).
+ *   - Alerted:   has received/seen the warning and is easing off (mild response).
+ *   - Braking:   actively braking hard in response to the hazard.
+ *   - Yielding:  deliberately opening a gap to let the emergency vehicle in.
+ *   - Normal:    ordinary background traffic, no emergency in play.
+ */
+export enum VehicleRole {
+  Normal = "Normal",
+  Unalerted = "Unalerted",
+  Alerted = "Alerted",
+  Braking = "Braking",
+  Yielding = "Yielding",
+  Emergency = "Emergency",
+}
+
+/**
+ * Pull-over maneuver phase for the emergency vehicle. The driver with acute
+ * visual impairment wants to leave the travel lane and stop on the shoulder, but
+ * ONLY when a safe gap exists in the target lane. If no safe gap exists the
+ * maneuver WAITS (it is never forced).
+ */
+export enum PullOverPhase {
+  None = "None", // not attempting (no emergency yet)
+  Requesting = "Requesting", // emergency declared, seeking a safe gap toward shoulder
+  Changing = "Changing", // a safe gap exists; laterally moving to the next lane
+  OnShoulder = "OnShoulder", // reached the shoulder
+  Stopped = "Stopped", // stopped safely on the shoulder (maneuver complete)
+}
+
 export type VehicleId = number;
 
 export interface Vehicle {
   id: VehicleId;
-  lane: number; // 0 = leftmost (fastest) ... laneCount-1 = rightmost
+  lane: number; // 0 = leftmost (fastest) ... laneCount-1 = rightmost travel lane
+  /**
+   * Continuous lateral position in "lane units" for smooth rendering of lane
+   * changes. Integer value == centered in `lane`. The shoulder is at lane index
+   * `laneCount` (one lane-width to the right of the rightmost travel lane).
+   */
+  laneF: number;
   position: number; // longitudinal position along the highway (m)
   speed: number; // m/s
   acceleration: number; // m/s^2 (last computed)
@@ -40,6 +80,14 @@ export interface Vehicle {
   desiredSpeed: number; // free-flow target speed (m/s)
   isConnected: boolean; // equipped with V2X radio?
   driverState: DriverState;
+  /** Visualization role (derived each tick). */
+  role: VehicleRole;
+  /** Pull-over maneuver phase (emergency vehicle only; None for others). */
+  pullOver: PullOverPhase;
+  /** Sim time (s) the pull-over maneuver completed (reached shoulder stop). */
+  pullOverCompletedAt: number | null;
+  /** True when this vehicle is deliberately opening a gap for the emergency car. */
+  yielding: boolean;
   /** The hazard vehicle that this vehicle is currently responding to, if any. */
   respondingToHazard: boolean;
   /** Target speed this vehicle is trying to reach due to an advisory (m/s). */
@@ -142,8 +190,23 @@ export interface Metrics {
   minTTC: number;
   /** Maximum braking deceleration magnitude observed (m/s^2, positive number). */
   maxBrakingDecel: number;
+  /**
+   * Count of DANGEROUS harsh-braking events (near-misses): distinct episodes of a
+   * vehicle braking harder than HARSH_BRAKING_THRESHOLD WHILE its time-to-collision
+   * to the leader is at or below NEAR_MISS_TTC. Gating on TTC is deliberate: a car
+   * easing firmly onto a V2X advisory with plenty of room is not a safety event,
+   * whereas a surprised driver braking hard with little time to impact is. This
+   * keeps the metric from penalising the v2x scenario merely because MORE cars
+   * respond at all. See metrics.ts (recordVehicleBraking) for the full rationale.
+   */
+  harshBrakingEvents: number;
   /** Lead time between first warning delivery and hazard vehicle reaching near-stop (s). */
   warningLeadTime: number;
+  /**
+   * Time (s) from emergency confirmation to the emergency vehicle completing its
+   * pull-over (stopped on the shoulder). null if not completed during the run.
+   */
+  pullOverCompletionTime: number | null;
   /** Delivered messages / attempted deliveries [0..1]. */
   messageDeliveryRate: number;
 }

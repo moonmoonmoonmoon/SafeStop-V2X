@@ -148,12 +148,46 @@ can later feed the same state machine without changing any downstream logic.
 
 - Following vehicles use the **IDM** car-following model.
 - Connected vehicles that receive a V2X advisory react **earlier** (shorter
-  reaction delay) and ease into a **graduated** slowdown — they do **not** teleport,
-  do **not** brake beyond physical limits, and do **not** perform lane changes.
+  reaction delay) and ease into a **graduated** slowdown — they do **not** teleport
+  and do **not** brake beyond physical limits.
 - All braking is bounded by a hard physical limit (`MAX_EMERGENCY_DECEL`).
 - The honest mechanism behind the contrast: V2X reaches vehicles **beyond visual
   range**, so they start slowing before they could ever see the hazard. In the
   hazard-only world those same vehicles keep full speed until the last moment.
+
+### Emergency pull-over maneuver
+
+The impaired driver does not just stop dead in a travel lane — they attempt to
+**pull over to the shoulder**, which is the realistic and safer behavior:
+
+- The emergency vehicle eases to a **request speed** and seeks to move one lane
+  right at a time toward a clearly marked **shoulder**.
+- It changes lanes **only when a safe gap exists** in the target lane (both a
+  front gap and a larger rear gap, `SAFE_MERGE_GAP`). If no safe gap exists, the
+  maneuver **waits** — it is never forced. A lane change already in progress is
+  **aborted** back to waiting if the target gap stops being safe.
+- Lateral motion is continuous (`laneF`) at a bounded `LANE_CHANGE_RATE`, so the
+  car visibly slides across lanes rather than teleporting.
+- It stops on the shoulder, clearing the travel lane.
+
+### Cooperative gap-creation (V2X only)
+
+When a connected vehicle in the target lane receives the advisory and is the
+emergency car's intended rear neighbor, it **yields**: it eases below the
+emergency car's speed to open the required merge gap (`YIELD_DECEL`). This is a
+mild, bounded speed reduction — not hard braking. The result is that in the V2X
+scenario the emergency vehicle reaches the shoulder **sooner** than in the
+hazard-only scenario, where it must wait for a rare natural gap.
+
+### Why max braking reads 8.0 m/s² in both scenarios
+
+`MAX_EMERGENCY_DECEL` (8.0 m/s², ~0.8 g) is a hard physical clamp on braking. In
+both scenarios at least one vehicle (a late-reacting follower, or in the stress
+preset the car that ultimately crashes) hits that clamp, so the **peak** braking
+is identical. The **harsh-braking events** metric — counting braking above
+`HARSH_BRAKING_THRESHOLD` while time-to-collision is below `NEAR_MISS_TTC` — shows
+how *often* dangerous, near-miss braking occurred, which differs sharply between
+the scenarios even when the single peak is the same.
 
 ### Deterministic replay
 
@@ -183,6 +217,14 @@ real-world data.
 | `ADVISORY_SPEED` | 8.0 m/s | advised crawl speed past hazard |
 | `HAZARD_DECEL` | 6.0 m/s² | hazard vehicle's own braking |
 | `VISUAL_RANGE` | 120 m | distance a driver can perceive the hazard |
+| `HARSH_BRAKING_THRESHOLD` | 4.0 m/s² | braking above this counts toward harsh events |
+| `NEAR_MISS_TTC` | 2.5 s | TTC below which a harsh brake counts as a near-miss |
+| `PULLOVER_REQUEST_SPEED` | 12.0 m/s | speed the emergency car rolls at while seeking a gap |
+| `PULLOVER_DECEL` | 3.0 m/s² | emergency car easing toward request speed |
+| `LANE_CHANGE_RATE` | 0.5 lane/s | lateral speed of a lane change (~2 s per lane) |
+| `SAFE_MERGE_GAP.front` | 12.0 m | min front gap required to start a lane change |
+| `SAFE_MERGE_GAP.rear` | 16.0 m | min rear gap required to start a lane change |
+| `YIELD_DECEL` | 3.5 m/s² | gentle easing a connected car uses to open a merge gap |
 | `DETECTION.ignoreBelow` | 0.4 s | below this, signals never leave Normal |
 | `DETECTION.confirmAfter` | 0.5 s | sustained signal to confirm & broadcast |
 | `DETECTION.clearAfter` | 1.5 s | signal-clear time to de-escalate |
@@ -209,8 +251,23 @@ npm test
 
 Covers the emergency-state transitions (including that brief signals and `Suspected`
 never broadcast, and SOS latches), V2X delivery under latency / loss / expiration,
-the traffic/safety metrics, deterministic replay, identical initial conditions
-across scenarios, bounded braking, and the intended V2X safety contrast.
+the traffic/safety metrics (including the near-miss harsh-braking definition and
+pull-over completion time), deterministic replay, identical initial conditions
+across scenarios, bounded braking, the safety-constrained pull-over (no lane
+change without a safe gap; no overlap/teleport during the change; reaches the
+shoulder when safe; stays waiting when not), and the intended V2X safety contrast.
+
+### Limitations (educational prototype)
+
+This is a **longitudinal, single-corridor microscopic model** with deliberately
+simplified behavior. It is **not** a production vehicle safety system. Known
+simplifications: ordinary background traffic does not make discretionary lane
+changes (only the emergency vehicle changes lanes); the V2X layer models
+range/latency/loss/expiration but not RF propagation, interference, or congestion
+control; perception is a simplified same-lane line-of-sight model; and the
+pull-over, yielding, and gap-acceptance rules are hand-tuned safety-constrained
+heuristics, not validated vehicle-control logic. No medical diagnosis or validated
+collision-prevention claim is made.
 
 ---
 

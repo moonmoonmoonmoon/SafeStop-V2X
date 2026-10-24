@@ -13,10 +13,17 @@ export interface WorldSnapshot {
   rsus: RoadsideUnit[];
   metrics: Metrics;
   hazardVehicleId: number;
+  /** Lane index of the shoulder (== laneCount). */
+  shoulderLane: number;
+  /** Pull-over phase of the emergency vehicle (for the timeline). */
+  emergencyPhase: Vehicle["pullOver"];
+  /** Emergency vehicle driver state (for the timeline). */
+  emergencyDriverState: Vehicle["driverState"];
 }
 
 export interface SimSnapshot {
   time: number;
+  laneCount: number;
   hazardOnly: WorldSnapshot;
   v2x: WorldSnapshot;
 }
@@ -90,18 +97,25 @@ export class Simulation {
   snapshot(): SimSnapshot {
     return {
       time: this.time,
+      laneCount: this.config.laneCount,
       hazardOnly: this.worldSnapshot(this.hazardOnly),
       v2x: this.worldSnapshot(this.v2x),
     };
   }
 
   private worldSnapshot(w: World): WorldSnapshot {
+    const emergency =
+      w.vehicles[w.hazardVehicleId] ??
+      w.vehicles.find((v) => v.id === w.hazardVehicleId)!;
     return {
       // Shallow copies so React sees new references without deep churn.
       vehicles: w.vehicles.map((v) => ({ ...v })),
       rsus: w.rsus.map((r) => ({ ...r })),
       metrics: w.getMetrics(),
       hazardVehicleId: w.hazardVehicleId,
+      shoulderLane: w.shoulderLane,
+      emergencyPhase: emergency.pullOver,
+      emergencyDriverState: emergency.driverState,
     };
   }
 }

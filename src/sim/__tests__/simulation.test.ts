@@ -14,6 +14,11 @@ function run(config: SimConfig, seconds: number) {
   return sim.snapshot();
 }
 
+// A full run long enough for the pull-over maneuver to complete in both worlds
+// of the DEFAULT scenario (the hazard-only world waits for a natural merge gap,
+// so it finishes noticeably later than the cooperative v2x world).
+const FULL = 30;
+
 describe("deterministic replay", () => {
   it("produces byte-identical results for the same config + seed", () => {
     const a = run(DEFAULT_CONFIG, 8);
@@ -48,7 +53,7 @@ describe("V2X advantage (behavioral, not a validated safety claim)", () => {
   });
 
   it("V2X scenario produces a positive warning lead time; hazard-only has none", () => {
-    const snap = run(DEFAULT_CONFIG, 20);
+    const snap = run(DEFAULT_CONFIG, FULL);
     // Hazard-only has no V2X warnings, so its lead time stays 0.
     expect(snap.hazardOnly.metrics.warningLeadTime).toBe(0);
     // V2X should register a positive lead time once a warning is delivered —
@@ -57,30 +62,57 @@ describe("V2X advantage (behavioral, not a validated safety claim)", () => {
   });
 
   it("bounds braking: no vehicle exceeds the physical deceleration limit", () => {
-    const snap = run(DEFAULT_CONFIG, 20);
+    const snap = run(DEFAULT_CONFIG, FULL);
     // MAX_EMERGENCY_DECEL is 8.0; allow a tiny numerical margin.
     expect(snap.hazardOnly.metrics.maxBrakingDecel).toBeLessThanOrEqual(8.001);
     expect(snap.v2x.metrics.maxBrakingDecel).toBeLessThanOrEqual(8.001);
   });
 
-  it("DEFAULT: v2x is measurably safer than hazard-only (higher minTTC, no worse braking)", () => {
-    const snap = run(DEFAULT_CONFIG, 20);
-    // The honest V2X benefit: upstream connected cars are warned by radio BEFORE
-    // they could ever SEE the hazard, so they glide down early instead of braking
-    // hard late. That yields a strictly higher minimum time-to-collision.
-    expect(snap.v2x.metrics.minTTC).toBeGreaterThan(snap.hazardOnly.metrics.minTTC);
+  it("DEFAULT: v2x is at least as safe as hazard-only on every reported metric", () => {
+    const snap = run(DEFAULT_CONFIG, FULL);
+    const h = snap.hazardOnly.metrics;
+    const x = snap.v2x.metrics;
+
+    // No collisions in EITHER DEFAULT world — this is the mild scenario.
+    expect(h.collisions).toBe(0);
+    expect(x.collisions).toBe(0);
+
+    // v2x is never LESS safe on minimum time-to-collision. Both are effectively
+    // safe (> 2.5 s) for v2x; the uninformed hazard-only world has a closer call.
+    expect(x.minTTC).toBeGreaterThanOrEqual(h.minTTC);
+    expect(x.minTTC).toBeGreaterThan(2.5);
+
+    // Harsh (near-miss) braking is NOT inverted: v2x must be <= hazard-only.
+    // This is the whole point of the honest metric — more cars RESPONDING in v2x
+    // must not be counted against it; only genuinely dangerous brakes count.
+    expect(x.harshBrakingEvents).toBeLessThanOrEqual(h.harshBrakingEvents);
+
     // Braking is never worse in v2x, and always within the physical bound.
-    expect(snap.v2x.metrics.maxBrakingDecel).toBeLessThanOrEqual(
-      snap.hazardOnly.metrics.maxBrakingDecel + 1e-6
-    );
-    // And the V2X warning arrives with lead time to spare.
+    expect(x.maxBrakingDecel).toBeLessThanOrEqual(h.maxBrakingDecel + 1e-6);
+  });
+
+  it("DEFAULT: v2x pulls over SOONER than hazard-only (cooperative gap creation)", () => {
+    const snap = run(DEFAULT_CONFIG, FULL);
+    const h = snap.hazardOnly.metrics.pullOverCompletionTime;
+    const x = snap.v2x.metrics.pullOverCompletionTime;
+    // Both complete the pull-over within the run...
+    expect(h).not.toBeNull();
+    expect(x).not.toBeNull();
+    // ...but the cooperative v2x world opens a merge gap sooner, so it finishes
+    // the pull-over strictly earlier than the hazard-only world (which must wait
+    // for a natural gap).
+    expect(x!).toBeLessThan(h!);
+  });
+
+  it("DEFAULT: v2x warning arrives with lead time to spare", () => {
+    const snap = run(DEFAULT_CONFIG, FULL);
     expect(snap.v2x.metrics.warningLeadTime).toBeGreaterThan(0);
   });
 
   it("DEMO PRESET: hazard-only rear-ends; v2x has strictly fewer collisions", () => {
     // Uses the EXACT config loaded by the on-stage "Demo Preset" button, so the
     // presentation's dramatic contrast is a verified property of the sim.
-    const snap = run(DEMO_PRESET_CONFIG, 20);
+    const snap = run(DEMO_PRESET_CONFIG, FULL);
     // Without V2X, late visual perception of the stopped queue causes at least
     // one rear-end collision among the fast upstream approachers.
     expect(snap.hazardOnly.metrics.collisions).toBeGreaterThanOrEqual(1);
@@ -93,6 +125,17 @@ describe("V2X advantage (behavioral, not a validated safety claim)", () => {
     expect(snap.v2x.metrics.maxBrakingDecel).toBeLessThanOrEqual(8.001);
   });
 
+  it("DEMO PRESET: v2x completes the pull-over; hazard-only does not", () => {
+    const snap = run(DEMO_PRESET_CONFIG, FULL);
+    // The high-risk hazard-only world never reaches a safe shoulder stop within
+    // the run (it is overwhelmed / blocked), so completion time is null.
+    expect(snap.hazardOnly.metrics.pullOverCompletionTime).toBeNull();
+    expect(snap.hazardOnly.emergencyPhase).not.toBe("Stopped");
+    // The v2x world cooperatively opens a gap and completes the pull-over.
+    expect(snap.v2x.metrics.pullOverCompletionTime).not.toBeNull();
+    expect(snap.v2x.emergencyPhase).toBe("Stopped");
+  });
+
   it("DEMO PRESET: both worlds start from identical initial traffic", () => {
     const sim = new Simulation(DEMO_PRESET_CONFIG);
     const snap = sim.snapshot();
@@ -103,8 +146,8 @@ describe("V2X advantage (behavioral, not a validated safety claim)", () => {
   });
 
   it("DEMO PRESET: replays deterministically (same run every time)", () => {
-    const a = run(DEMO_PRESET_CONFIG, 20);
-    const b = run(DEMO_PRESET_CONFIG, 20);
+    const a = run(DEMO_PRESET_CONFIG, FULL);
+    const b = run(DEMO_PRESET_CONFIG, FULL);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 });

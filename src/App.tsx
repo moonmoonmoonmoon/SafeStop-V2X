@@ -16,9 +16,42 @@ import type { SimConfig } from "./sim/types";
 import { HighwayCanvas } from "./render/HighwayCanvas";
 import { ControlPanel } from "./ui/ControlPanel";
 import { MetricsDashboard } from "./ui/MetricsDashboard";
+import { EventTimeline } from "./ui/EventTimeline";
+import type { SimSnapshot as Snap } from "./sim/simulation";
 import "./App.css";
 
 const MAX_SIM_TIME = 25; // seconds of simulated time per run
+
+/**
+ * Compute a shared zoomed viewport (in meters) that frames the action for BOTH
+ * scenarios identically, so the side-by-side comparison lines up. We center on
+ * the union of both emergency vehicles and include the upstream approaching
+ * traffic, with padding, clamped to the highway.
+ */
+function computeViewport(
+  snap: Snap,
+  highwayLength: number
+): { start: number; end: number } {
+  const emergencies = [snap.hazardOnly, snap.v2x].map(
+    (w) =>
+      w.vehicles.find((v) => v.id === w.hazardVehicleId) ?? w.vehicles[0]
+  );
+  const hazardPos = Math.max(...emergencies.map((e) => e.position));
+  // Frame from ~300 m behind the hazard to ~120 m ahead: that captures the
+  // upstream approachers, the pull-over, and the shoulder stop.
+  const BEHIND = 320;
+  const AHEAD = 140;
+  let start = hazardPos - BEHIND;
+  let end = hazardPos + AHEAD;
+  if (start < 0) {
+    end -= start;
+    start = 0;
+  }
+  if (end > highwayLength) end = highwayLength;
+  // Keep a minimum window so cars never balloon.
+  if (end - start < 360) end = start + 360;
+  return { start, end };
+}
 
 export default function App() {
   const simRef = useRef<Simulation>(new Simulation(DEFAULT_CONFIG));
@@ -133,6 +166,11 @@ export default function App() {
 
   const finished = snapshot.time >= MAX_SIM_TIME;
 
+  const view = computeViewport(snapshot, config.highwayLength);
+  const v2xBroadcasting =
+    snapshot.v2x.emergencyDriverState === "Confirmed";
+  const hazBroadcasting = false; // the hazard-only scenario never broadcasts
+
   const isDemoPreset =
     config.vehicleCount === DEMO_PRESET_CONFIG.vehicleCount &&
     config.meanSpeed === DEMO_PRESET_CONFIG.meanSpeed &&
@@ -192,22 +230,36 @@ export default function App() {
         <div className="scenario-card">
           <HighwayCanvas
             snapshot={snapshot.hazardOnly}
-            highwayLength={config.highwayLength}
             laneCount={config.laneCount}
+            viewStart={view.start}
+            viewEnd={view.end}
+            broadcasting={hazBroadcasting}
+            commRange={config.commRange}
             title="SCENARIO A — Hazard lights only (today)"
             accent="#b23b3b"
+            time={snapshot.time}
           />
         </div>
         <div className="scenario-card">
           <HighwayCanvas
             snapshot={snapshot.v2x}
-            highwayLength={config.highwayLength}
             laneCount={config.laneCount}
+            viewStart={view.start}
+            viewEnd={view.end}
+            broadcasting={v2xBroadcasting}
+            commRange={config.commRange}
             title="SCENARIO B — SafeStop V2X assisted"
             accent="#2f8f5b"
+            time={snapshot.time}
           />
         </div>
       </div>
+
+      <EventTimeline
+        v2x={snapshot.v2x}
+        emergencyTime={config.emergencyTime}
+        simTime={snapshot.time}
+      />
 
       <div className="lower">
         <MetricsDashboard
@@ -217,18 +269,20 @@ export default function App() {
         <aside className="legend">
           <h3>Legend</h3>
           <ul>
-            <li><span className="dot" style={{ background: "#ffd60a" }} /> Hazard vehicle (impairment onset)</li>
-            <li><span className="dot" style={{ background: "#ff9500" }} /> Hazard — suspected (no broadcast)</li>
-            <li><span className="dot" style={{ background: "#ff3b30" }} /> Hazard — confirmed (broadcasting)</li>
-            <li><span className="dot" style={{ background: "#34c759" }} /> Responding safely</li>
-            <li><span className="dot" style={{ background: "#7a8cff" }} /> Connected vehicle (V2X)</li>
-            <li><span className="dot" style={{ background: "#4cc9f0" }} /> Normal traffic</li>
+            <li><span className="dot" style={{ background: "#ff3b30" }} /> Emergency vehicle (impaired, pulling over)</li>
+            <li><span className="dot" style={{ background: "#4cc9f0" }} /> Unalerted traffic (hasn't perceived it)</li>
+            <li><span className="dot" style={{ background: "#ffd166" }} /> Alerted (warned, easing off)</li>
+            <li><span className="dot" style={{ background: "#ff7a45" }} /> Braking hard</li>
+            <li><span className="dot" style={{ background: "#b388ff" }} /> Yielding (opening a merge gap)</li>
             <li><span className="dot" style={{ background: "#6b7280" }} /> Crashed</li>
             <li><span className="dot" style={{ background: "#ffb300" }} /> Active roadside sign (V2I)</li>
+            <li><span className="dot" style={{ background: "#5ac8fa" }} /> V2X message propagation (rings)</li>
           </ul>
           <p className="disclaimer">
-            Simulation for demonstration only. Not a production safety controller;
-            no medical diagnosis or validated collision-prevention claim.
+            Educational digital twin for demonstration only. Not a production
+            vehicle safety controller; no medical diagnosis or validated
+            collision-prevention claim. Pull-over, yielding, and gap-acceptance
+            are simplified safety-constrained heuristics.
           </p>
         </aside>
       </div>

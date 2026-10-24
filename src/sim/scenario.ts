@@ -11,7 +11,13 @@
  * startup braking transient. The ONLY disturbance in the run is the designated
  * hazard vehicle's emergency. This keeps the comparison and metrics clean.
  */
-import { DriverState, type SimConfig, type Vehicle } from "./types";
+import {
+  DriverState,
+  PullOverPhase,
+  VehicleRole,
+  type SimConfig,
+  type Vehicle,
+} from "./types";
 import { Rng } from "./rng";
 import { IDM, VEHICLE_LENGTH, VISUAL_RANGE } from "./constants";
 
@@ -32,6 +38,7 @@ function makeVehicle(
   return {
     id,
     lane,
+    laneF: lane,
     position,
     speed,
     acceleration: 0,
@@ -39,6 +46,10 @@ function makeVehicle(
     desiredSpeed,
     isConnected,
     driverState: DriverState.Normal,
+    role: VehicleRole.Normal,
+    pullOver: PullOverPhase.None,
+    pullOverCompletedAt: null,
+    yielding: false,
     respondingToHazard: false,
     advisorySpeed: null,
     advisoryReceivedAt: null,
@@ -98,6 +109,29 @@ export function buildScenario(config: SimConfig): Scenario {
   const hazard = laneVehicles[laneVehicles.length - 1];
   hazard.isConnected = true;
 
+  // --- Engineer the pull-over gap situation in the TARGET lane -------------
+  // The emergency vehicle pulls over to the RIGHT, so its first target lane is
+  // midLane+1. We reposition a few EXISTING target-lane vehicles into a tight
+  // stream straddling the hazard, forming a "merge blocker". No vehicle is added
+  // or removed, so vehicleCount is preserved and BOTH worlds get the identical
+  // fleet.
+  //
+  // With the stream there, the hazard cannot merge immediately: the rear gap is
+  // unsafe and natural both-sides-safe gaps are rare. The two worlds then diverge
+  // HONESTLY:
+  //   - hazard-only: the stream (unaware) keeps cruising; the hazard must WAIT
+  //     for a rare natural gap, and the safety-constrained merge is held off (any
+  //     committed change aborted) until the gap is genuinely clear. It completes
+  //     the pull-over LATE and never collides.
+  //   - v2x: the connected neighbour just behind the hazard receives the advisory
+  //     and YIELDS, easing below the hazard's speed to open the rear gap. The
+  //     hazard merges SOONER.
+  // This makes cooperative gap-creation the measurable difference between them.
+  const targetLane = midLane + 1;
+  if (targetLane <= config.laneCount - 1) {
+    layoutMergeBlocker(vehicles, hazard, targetLane, cruise);
+  }
+
   return { vehicles, hazardVehicleId: hazard.id };
 }
 
@@ -106,6 +140,14 @@ const HAZARD_IMMEDIATE_FOLLOWERS = 3;
 
 /** Max fast upstream approachers placed in the hazard lane (keeps it compact). */
 const MAX_UPSTREAM_IN_HAZARD_LANE = 5;
+
+/** Number of cars in the target-lane merge stream straddling the hazard. */
+const MERGE_STREAM_SIZE = 4;
+
+/** Center-to-center spacing within the merge stream (m). Tight => rare gaps. */
+const MERGE_SPACING = 24;
+
+
 
 /**
  * Deterministically decide how many vehicles go in each lane. The hazard lane is
@@ -200,6 +242,56 @@ function buildHazardLane(
       makeVehicle(takeId(), lane, pos, cruise, desiredSpeed, nextConnected())
     );
     pos += clusterGap + VEHICLE_LENGTH + rng.range(2, 8);
+  }
+}
+
+/**
+ * Engineer the merge situation in the emergency vehicle's first target lane so
+ * that the pull-over is GATED on gap availability, and so cooperative V2X
+ * yielding is what opens the gap sooner.
+ *
+ * We reposition a few EXISTING target-lane vehicles into a tight stream (no
+ * add/remove, so the fleet is identical in both worlds and vehicleCount is
+ * preserved):
+ *
+ *     [ car ] [ car ] [ rear neighbour ]   [ hazard (other lane) ]
+ *       low position ................................> high position
+ *
+ * The stream straddles the hazard's longitudinal position and all cars cruise at
+ * the common speed, so it stays abreast of the hazard until the emergency begins.
+ * It is dense enough that a NATURALLY-occurring both-sides-safe gap next to the
+ * hazard is rare:
+ *   - hazard-only: the uninformed stream keeps cruising; the hazard must WAIT for
+ *     a rare natural gap, and the safety-constrained merge is held off (any
+ *     committed change aborted) until the gap is genuinely clear — so it completes
+ *     the pull-over LATE and never collides.
+ *   - v2x: the rear neighbour just behind the hazard is connected, receives the
+ *     advisory and YIELDS, easing below the hazard's speed to deliberately open
+ *     the rear gap EARLY — so the hazard merges and completes the pull-over SOONER.
+ */
+function layoutMergeBlocker(
+  vehicles: Vehicle[],
+  hazard: Vehicle,
+  targetLane: number,
+  cruise: number
+): void {
+  const inLane = vehicles
+    .filter((v) => v.lane === targetLane)
+    .sort((a, b) => a.position - b.position);
+  if (inLane.length === 0) return;
+
+  const blockerCount = Math.min(inLane.length, MERGE_STREAM_SIZE);
+  const blockers = inLane.slice(inLane.length - blockerCount);
+  // Rear-neighbour sits just behind the hazard; the rest trail at MERGE_SPACING.
+  const rearGap = 11; // m behind the hazard, < SAFE_MERGE_GAP.rear (16)
+  const rearNeighborPos = hazard.position - hazard.length - rearGap;
+  for (let k = 0; k < blockers.length; k++) {
+    const v = blockers[k];
+    v.position = rearNeighborPos - k * MERGE_SPACING;
+    v.laneF = targetLane;
+    v.speed = cruise;
+    v.desiredSpeed = cruise;
+    v.isConnected = true; // connected so the yield can happen in v2x
   }
 }
 
